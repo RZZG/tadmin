@@ -1,20 +1,14 @@
 <?php
 
-namespace tadmin\behavior;
+namespace tadmin;
 
-use think\App;
-use think\facade\Route;
+use think\Service;
+use think\Route;
+use Casbin\Model\Model;
+use Casbin\Enforcer;
 
-/**
- * Tadmin 启动行为.
- */
-class Boot
+class TadminService extends Service
 {
-    /**
-     * @var App
-     */
-    protected $app;
-
     /**
      * 路由分组名.
      *
@@ -29,33 +23,36 @@ class Boot
      */
     protected $namespace = '\\tadmin\\controller\\';
 
-    public function __construct(App $app)
+    public function register()
     {
-        $this->app = $app;
+        $this->bindProviders();
+
+        // 绑定 Casbin决策器
+        $this->app->bind('tadmin.enforcer', function () {
+            $config = $this->app->config->get('tadmin.enforcer');
+            $adapter = $config['adapter'];
+            $model = new Model();
+            $model->loadModel($config['model_config_path']);
+            return new Enforcer($model, app($adapter), false);
+        });
     }
 
-    public function run(App $app)
+    public function boot(Route $route)
     {
-        // $this->loadHelper();
+        // $route->get('captcha/[:config]', "\\think\\captcha\\CaptchaController@index");
         $this->loadConfig();
         $this->importMiddleware();
-        $this->bindProviders();
-        $this->bootRoute();
-
-        $this->initConsole();
+        $this->bootRoute($route);
+        $this->commands([
+            'tadmin:init' => \tadmin\command\Init::class,
+            'tadmin:migrate:run' => \tadmin\command\Migrate::class,
+        ]);
     }
-
-    // protected function loadHelper()
-    // {
-    //     // 加载公共文件
-    //     if (is_file(dirname(dirname(__DIR__)) . '/helper.php')) {
-    //         include_once dirname(dirname(__DIR__)) . '/helper.php';
-    //     }
-    // }
 
     protected function loadConfig()
     {
         $configFileNames = [
+            'middleware',
             'filesystems',
             'casbin',
             'tadmin',
@@ -64,7 +61,7 @@ class Boot
             if (is_file(admin_config_path($fileName . '.php'))) {
                 $file = admin_config_path($fileName . '.php');
                 $configName = pathinfo($file, PATHINFO_FILENAME);
-                $config = $this->app->config->pull($configName);
+                $config = $this->app->config->get($configName);
 
                 $config = array_deep_merge(
                     require_once $file,
@@ -72,21 +69,17 @@ class Boot
                 );
 
                 $this->app->config->set($config, $configName);
-
-                // 重新加载应用中的同名配置，以覆盖此配置
-                // if (is_file($this->app->getConfigPath().basename($file))) {
-                //     $this->app->config->load($this->app->getConfigPath().basename($file), $configName);
-                // }
             }
         }
     }
+
 
     protected function importMiddleware()
     {
         if (is_file(admin_config_path('middleware.php'))) {
             $middleware = require_once admin_config_path('/middleware.php');
             if (\is_array($middleware)) {
-                $this->app->middleware->setConfig($middleware);
+                $this->app->middleware->import($middleware, 'route');
             }
         }
     }
@@ -94,13 +87,13 @@ class Boot
     protected function bindProviders()
     {
         if (is_file(admin_config_path('provider.php'))) {
-            $this->app->bindTo(
+            $this->app->bind(
                 include_once admin_config_path('/provider.php')
             );
         }
     }
 
-    protected function bootRoute()
+    protected function bootRoute(Route $route)
     {
         $routePath = admin_route_path();
         // 路由检测
@@ -109,20 +102,12 @@ class Boot
             if (strpos($file, '.php')) {
                 $filename = $routePath . $file;
                 // 导入路由配置
-                Route::group($this->name, function () use ($filename) {
-                    $rules = include_once $filename;
-                    if (\is_array($rules)) {
-                        $this->app->route->import($rules);
-                    }
-                })->prefix($this->namespace);
+                $route->group($this->name, function () use ($filename) {
+                    include_once($filename);
+                })
+                    ->prefix($this->namespace)
+                    ->middleware(\think\middleware\SessionInit::class);
             }
-        }
-    }
-
-    public function initConsole()
-    {
-        if (!('cli' === \PHP_SAPI || 'phpdbg' === \PHP_SAPI)) {
-            return;
         }
     }
 }

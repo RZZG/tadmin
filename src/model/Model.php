@@ -3,7 +3,7 @@
 namespace tadmin\model;
 
 use think\Model as Base;
-use Db;
+use think\facade\Db;
 
 abstract class Model extends Base
 {
@@ -16,7 +16,7 @@ abstract class Model extends Base
     public function __construct($data = [])
     {
         if ($this->table) {
-            $this->table = Db::getConfig('prefix').$this->table;
+            $this->table = Db::getConfig('prefix') . $this->table;
         }
         parent::__construct($data);
     }
